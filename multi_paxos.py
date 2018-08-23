@@ -106,6 +106,7 @@ class Paxos:
         self._port = port
         self._servers = servers
         self._storage = storage
+        self._over_half_num = len(servers) // 2 + 1
 
         rpc.add_event_listener('prepare', self._on_prepare)
         rpc.add_event_listener('accept', self._on_accept)
@@ -149,7 +150,10 @@ class Paxos:
         fs = [asyncio.ensure_future(s.prepare(self._seq))
               for s in self._servers]
         for f in asyncio.as_completed(fs):
-            r = await f
+            try:
+                r = await f
+            except ConnectionError:
+                continue
             if is_state_changed_then_handle(fs):
                 return None
 
@@ -165,15 +169,20 @@ class Paxos:
                 val = proposal_val
 
             cnt += 1
-            if cnt >= len(self._servers) // 2 + 1:
+            if cnt >= self._over_half_num:
                 break
+        else:
+            return None
 
         # accept
         cnt = 0
         fs = [asyncio.ensure_future(s.accept(self._seq, val))
               for s in self._servers]
         for f in asyncio.as_completed(fs):
-            seq = await f
+            try:
+                seq = await f
+            except ConnectionError:
+                continue
             if is_state_changed_then_handle(fs):
                 return None
 
@@ -184,8 +193,10 @@ class Paxos:
                 return None
 
             cnt += 1
-            if cnt >= len(self._servers) // 2 + 1:
+            if cnt >= self._over_half_num:
                 break
+        else:
+            return None
 
         # learn
         for s in self._servers:
