@@ -119,7 +119,7 @@ class Paxos:
         rpc.add_event_listener('accept', self._on_accept)
         rpc.add_event_listener('learn', self._on_learn)
 
-        # 状态
+        # status
         try:
             self._seq, self._proposal_seq, self._proposal_val, self._proposal_unanimous = self._storage.load()
         except FileNotFoundError:
@@ -137,7 +137,8 @@ class Paxos:
 
         local_seq = self._seq
 
-        # await 时状态有可能被修改, 若发生, 则放弃
+        # When we are `await`ing, the status may be changed
+        # if so, abort the operation
         def is_state_changed_then_handle(futs):
             if local_seq < self._seq or self._proposal_unanimous:
                 for f in futs:

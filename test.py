@@ -1,4 +1,4 @@
-from multi_paxos import run_cli
+from paxos import run_cli
 
 hosts_ports = (
     ('127.0.0.1', '8881'),
