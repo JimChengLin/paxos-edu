@@ -1,3 +1,5 @@
+from sys import stdin
+
 import asyncio
 import pickle
 from datetime import datetime
@@ -6,8 +8,7 @@ loop = asyncio.get_event_loop()
 
 
 def print_debug(*args, **kwargs):
-    if __debug__:
-        print(datetime.now(), *args, **kwargs)
+    print(datetime.now(), *args, **kwargs)
 
 
 def rpc_decode(s):
@@ -23,21 +24,29 @@ class RPC:
         self._cb_table = {}
 
     async def _server_handle(self, reader, writer):
-        data = await reader.read()
+        try:
+            data = await reader.read()
 
-        cmd = rpc_decode(data)
-        event, args, kwargs = cmd
-        cb = self._cb_table[event]
-        ret = cb(*args, **kwargs) if not asyncio.iscoroutine(cb) else await cb(*args, **kwargs)
-        s = rpc_encode(ret)
+            cmd = rpc_decode(data)
+            event, args, kwargs = cmd
+            cb = self._cb_table[event]
+            ret = cb(*args, **kwargs) if not asyncio.iscoroutine(cb) else await cb(*args, **kwargs)
+            s = rpc_encode(ret)
 
-        writer.write(s)
-        await writer.drain()
-        writer.close()
+            writer.write(s)
+            await writer.drain()
+            writer.close()
+
+            print_debug('Receive:', cmd, 'Reply:', ret)
+
+        except ConnectionError:
+            pass
 
     def schedule_server(self, host, port):
         coro = asyncio.start_server(self._server_handle, host, port, loop=loop)
         asyncio.ensure_future(coro)
+
+        print_debug('Start:', host, port)
 
     def add_event_listener(self, event, cb):
         self._cb_table[event] = cb
@@ -52,13 +61,17 @@ class RPCProxy:
         async def call(host, port, event, *args, **kwargs):
             reader, writer = await asyncio.open_connection(host, port, loop=loop)
 
-            s = rpc_encode((event, args, kwargs))
+            cmd = (event, args, kwargs)
+            s = rpc_encode(cmd)
             writer.write(s)
             writer.write_eof()
 
             data = await reader.read()
             writer.close()
             ret = rpc_decode(data)
+
+            print_debug('Request:', cmd, 'Receive:', ret)
+
             return ret
 
         def func(*args, **kwargs):
@@ -75,10 +88,13 @@ class Storage:
         self._filename = filename
 
     def load(self):
-        return pickle.load(self._filename)
+        with open(self._filename, 'rb') as f:
+            ret = pickle.load(f)
+        return ret
 
     def dump(self, o):
-        pickle.dump(o, self._filename)
+        with open(self._filename, 'wb') as f:
+            pickle.dump(o, f)
 
 
 # --- Storage ---
@@ -105,6 +121,9 @@ class Paxos:
             self._proposal_unanimous = False
 
     async def propose(self, val):
+
+        print_debug('Propose:', val)
+
         if self._proposal_unanimous:
             return self._proposal_val
 
@@ -113,7 +132,7 @@ class Paxos:
         local_proposal_val = self._proposal_val
         local_proposal_unanimous = self._proposal_unanimous
 
-        # await 时状态有可能被修改, 若发生, 则放弃本次操作
+        # await 时状态有可能被修改, 若发生, 则放弃
         def is_state_changed_then_handle(futs):
             if local_seq != self._seq \
                     or local_proposal_seq != self._proposal_seq \
@@ -142,8 +161,8 @@ class Paxos:
                 return None
 
             if proposal_val is not None and proposal_seq > max_proposal_seq:
-                val = proposal_val
                 max_proposal_seq = proposal_seq
+                val = proposal_val
 
             cnt += 1
             if cnt >= len(self._servers) // 2 + 1:
@@ -168,13 +187,10 @@ class Paxos:
             if cnt >= len(self._servers) // 2 + 1:
                 break
 
-        self._proposal_val = val
-        self._proposal_unanimous = True
-        self._store()
-
         # learn
         for s in self._servers:
             asyncio.ensure_future(s.learn(val))
+        return val
 
     def _store(self):
         self._storage.dump((self._seq,
@@ -182,12 +198,10 @@ class Paxos:
                             self._proposal_unanimous))
 
     def _on_prepare(self, seq):
-        if seq >= self._seq:
+        if seq > self._seq:
             self._seq = seq
             self._store()
-            return seq, self._proposal_seq, self._proposal_val
-        else:
-            return self._seq, None, None
+        return self._seq, self._proposal_seq, self._proposal_val
 
     def _on_accept(self, seq, val):
         if seq >= self._seq:
@@ -201,4 +215,21 @@ class Paxos:
         self._proposal_val = val
         self._proposal_unanimous = True
         self._store()
+
+
 # --- Paxos ---
+
+def run_cli(host, port, hosts_ports, filename):
+    rpc = RPC()
+    servers = [RPCProxy(h, p) for h, p in hosts_ports]
+    storage = Storage(filename)
+    paxos = Paxos(host, port, servers, storage, rpc)
+
+    def stdin_handle(*_):
+        asyncio.ensure_future(paxos.propose(stdin.readline()))
+
+    rpc.schedule_server(host, port)
+    loop.add_reader(stdin.fileno(), stdin_handle)
+    loop.run_forever()
+
+# --- CLI ---

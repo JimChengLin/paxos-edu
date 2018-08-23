@@ -8,4 +8,4 @@ hosts_ports = (
     ('127.0.0.1', '8885'),
 )
 
-run_cli(*hosts_ports[1], hosts_ports, hosts_ports[1][1])
+run_cli(*hosts_ports[2], hosts_ports, hosts_ports[2][1])
