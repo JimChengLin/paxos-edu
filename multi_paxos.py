@@ -237,10 +237,13 @@ def run_cli(host, port, hosts_ports, filename):
     paxos = Paxos(host, port, servers, storage, rpc)
 
     def stdin_handle(*_):
-        asyncio.ensure_future(paxos.propose(stdin.readline()))
+        asyncio.ensure_future(paxos.propose(stdin.readline().strip()))
 
     rpc.schedule_server(host, port)
     loop.add_reader(stdin.fileno(), stdin_handle)
-    loop.run_forever()
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
 
 # --- CLI ---
