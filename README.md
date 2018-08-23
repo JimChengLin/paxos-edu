@@ -1,0 +1,1 @@
+A standalone and compact(200 Python lines) Basic Paxos implementation for education.

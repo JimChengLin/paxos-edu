@@ -7,6 +7,13 @@ from datetime import datetime
 loop = asyncio.get_event_loop()
 
 
+async def async_suppress_exception(coro):
+    try:
+        return await coro
+    except ConnectionError:
+        pass
+
+
 def print_debug(*args, **kwargs):
     print(datetime.now(), *args, **kwargs)
 
@@ -129,16 +136,10 @@ class Paxos:
             return self._proposal_val
 
         local_seq = self._seq
-        local_proposal_seq = self._proposal_seq
-        local_proposal_val = self._proposal_val
-        local_proposal_unanimous = self._proposal_unanimous
 
         # await 时状态有可能被修改, 若发生, 则放弃
         def is_state_changed_then_handle(futs):
-            if local_seq != self._seq \
-                    or local_proposal_seq != self._proposal_seq \
-                    or local_proposal_val != self._proposal_val \
-                    or local_proposal_unanimous != self._proposal_unanimous:
+            if local_seq < self._seq or self._proposal_unanimous:
                 for f in futs:
                     f.cancel()
                 return True
@@ -200,7 +201,7 @@ class Paxos:
 
         # learn
         for s in self._servers:
-            asyncio.ensure_future(s.learn(val))
+            asyncio.ensure_future(async_suppress_exception(s.learn(val)))
         return val
 
     def _store(self):
